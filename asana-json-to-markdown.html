@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Asana → Markdown</title>
+        <!-- Minimal, modern dark theme -->
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+        <style>
+            :root {
+                --app-gap: 1rem;
+            }
+            main {
+                max-width: 1100px;
+                margin: 0 auto;
+                padding: 2rem 1rem;
+            }
+            .grid {
+                display: grid;
+                gap: var(--app-gap);
+                grid-template-columns: 1fr;
+            }
+            @media (min-width: 900px) {
+                .grid {
+                    grid-template-columns: 1fr 1fr;
+                    align-items: start;
+                }
+            }
+            .spacer {
+                margin-top: 1rem;
+                margin-bottom: 1rem;
+            }
+            .spacer::before {
+                content: "";
+                display: block;
+                height: 2.5rem;
+            }
+            textarea {
+                min-height: 18rem;
+                resize: vertical;
+            }
+            #out {
+                min-height: 18rem;
+                white-space: pre;
+            }
+            .mono {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+                    monospace;
+            }
+            .row-actions {
+                display: flex;
+                gap: 0.5rem;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .ok {
+                color: var(--pico-primary);
+            }
+            .warn {
+                color: var(--pico-warning);
+            }
+            .err {
+                color: var(--pico-del-color);
+            }
+            .footer {
+                margin: 0;
+                font-size: 0.9rem;
+            }
+        </style>
+    </head>
+    <body>
+        <main>
+            <h1>Asana → Markdown</h1>
+            <p class="muted">
+                Paste an Asana board export (matching the provided schema) and convert it to copy-ready Markdown.
+            </p>
+
+            <div class="grid">
+                <!-- Input -->
+                <section>
+                    <h3>Input JSON</h3>
+                    <details style="margin-top: 1rem" role="button" class="outline secondary">
+                        <summary>Input schema (summary)</summary>
+                        <code class="container-fluid mono" style="text-align: start">
+                            AsanaBoard: { exported_at, project_url, groups[ Group ] }<br />
+                            Group: { group_name, task_count, tasks[ Task ] }<br />
+                            Task: { task_gid, title, permalink_url, comments[ Comment ] }<br />
+                            Comment: { type:"comment", text, author, created }
+                        </code>
+                    </details>
+                    <textarea id="inp" class="mono" placeholder="Paste your Asana JSON here..."></textarea>
+                    <div class="row-actions">
+                        <button id="convert">Convert to Markdown</button>
+                        <button id="clearInp" class="secondary">Clear Input</button>
+                        <small id="status" class="footer"></small>
+                    </div>
+                </section>
+
+                <!-- Output -->
+                <section>
+                    <h3>Output Markdown</h3>
+                    <div class="spacer"></div>
+                    <pre id="out" class="mono" aria-live="polite"></pre>
+                    <div class="row-actions">
+                        <button id="copy">Copy Markdown</button>
+                        <button id="clearOut" class="secondary">Clear</button>
+                        <small id="outMeta" class="footer muted"></small>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <script>
+            const $ = (sel) => document.querySelector(sel);
+            const inp = $("#inp");
+            const out = $("#out");
+            const status = $("#status");
+            const outMeta = $("#outMeta");
+
+            const sample = {
+                exported_at: new Date().toISOString(),
+                project_url: "https://app.asana.com/0/12345/board",
+                groups: [
+                    {
+                        group_name: "To Do",
+                        task_count: 2,
+                        tasks: [
+                            {
+                                task_gid: "1001",
+                                title: "Set up project",
+                                permalink_url: "https://app.asana.com/0/12345/1001",
+                                comments: [
+                                    {
+                                        type: "comment",
+                                        text: "Kickoff scheduled for Friday.",
+                                        author: "Alex",
+                                        created: "2025-10-01T10:00:00Z",
+                                    },
+                                    {
+                                        type: "comment",
+                                        text: "Add stakeholders to the doc.",
+                                        author: "Sam",
+                                        created: "2025-10-02T15:30:00Z",
+                                    },
+                                ],
+                            },
+                            {
+                                task_gid: "1002",
+                                title: "Create repo",
+                                permalink_url: "https://app.asana.com/0/12345/1002",
+                                comments: [
+                                    {
+                                        type: "comment",
+                                        text: "Use MIT license.",
+                                        author: "Jamie",
+                                        created: "2025-10-03T08:45:00Z",
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            };
+
+            // Helpers
+            const quoteBlock = (text) =>
+                String(text || "")
+                    .replace(/\r\n/g, "\n")
+                    .split("\n")
+                    .map((line) => `> ${line}`)
+                    .join("\n");
+
+            function toMarkdown(board) {
+                if (!board || !Array.isArray(board.groups)) return "";
+
+                const lines = [];
+                board.groups.forEach((group) => {
+                    const groupName = group?.group_name ?? "Untitled Group";
+                    lines.push(`## ${groupName}`);
+
+                    (group.tasks || []).forEach((task) => {
+                        const title = task?.title ?? "Untitled Task";
+                        lines.push(`### ${title}`);
+                        // Include comments; if none, still keep the section without quotes
+                        if (Array.isArray(task.comments) && task.comments.length > 0) {
+                            task.comments.forEach((c) => {
+                                lines.push(quoteBlock(c?.text ?? "").trimEnd());
+                            });
+                        }
+                        // Blank line between tasks for readability
+                        lines.push("");
+                    });
+
+                    // Extra spacing between groups
+                    lines.push("");
+                });
+
+                return lines.join("\n").trim() + "\n";
+            }
+
+            function safeParse(jsonText) {
+                try {
+                    return { data: JSON.parse(jsonText), error: null };
+                } catch (e) {
+                    return { data: null, error: e.message };
+                }
+            }
+
+            function validateShape(board) {
+                // Lightweight checks aligned with the schema (not a full JSON Schema validator).
+                const errs = [];
+                if (typeof board !== "object" || board === null) errs.push("Root must be an object.");
+                if (!board?.exported_at) errs.push("Missing: exported_at");
+                if (!board?.project_url) errs.push("Missing: project_url");
+                if (!Array.isArray(board?.groups)) errs.push("Missing or invalid: groups[]");
+
+                (board?.groups || []).forEach((g, i) => {
+                    if (!g?.group_name) errs.push(`Group ${i + 1}: missing group_name`);
+                    if (!Array.isArray(g?.tasks)) errs.push(`Group ${i + 1}: missing tasks[]`);
+                    if (typeof g?.task_count !== "number") errs.push(`Group ${i + 1}: missing/invalid task_count`);
+                    (g?.tasks || []).forEach((t, j) => {
+                        if (!t?.title) errs.push(`Group ${i + 1} Task ${j + 1}: missing title`);
+                        if (!t?.task_gid) errs.push(`Group ${i + 1} Task ${j + 1}: missing task_gid`);
+                        if (!t?.permalink_url) errs.push(`Group ${i + 1} Task ${j + 1}: missing permalink_url`);
+                        if (!Array.isArray(t?.comments)) errs.push(`Group ${i + 1} Task ${j + 1}: missing comments[]`);
+                        (t?.comments || []).forEach((c, k) => {
+                            if (c?.type !== "comment")
+                                errs.push(`Group ${i + 1} Task ${j + 1} Comment ${k + 1}: type must be "comment"`);
+                            if (!c?.text) errs.push(`Group ${i + 1} Task ${j + 1} Comment ${k + 1}: missing text`);
+                            if (!c?.author) errs.push(`Group ${i + 1} Task ${j + 1} Comment ${k + 1}: missing author`);
+                            if (!c?.created)
+                                errs.push(`Group ${i + 1} Task ${j + 1} Comment ${k + 1}: missing created`);
+                        });
+                    });
+                });
+
+                return errs;
+            }
+
+            function updateMeta(board, errors, md) {
+                if (errors.length) {
+                    status.textContent = `Found ${errors.length} issue(s).`;
+                    status.className = "footer err";
+                } else {
+                    status.textContent = "Looks good.";
+                    status.className = "footer ok";
+                }
+
+                const groupCount = board?.groups?.length ?? 0;
+                const taskCount = (board?.groups || []).reduce((n, g) => n + (g?.tasks?.length || 0), 0);
+                outMeta.textContent = md
+                    ? `Groups: ${groupCount} • Tasks: ${taskCount} • ${md.split("\n").filter(Boolean).length} lines`
+                    : "";
+            }
+
+            // Wire up actions
+            $("#convert").addEventListener("click", () => {
+                const raw = inp.value.trim() || JSON.stringify(sample, null, 2);
+                if (!inp.value.trim()) inp.value = JSON.stringify(sample, null, 2);
+
+                const { data, error } = safeParse(raw);
+                if (error) {
+                    status.textContent = `JSON parse error: ${error}`;
+                    status.className = "footer err";
+                    out.textContent = "";
+                    outMeta.textContent = "";
+                    return;
+                }
+
+                const errs = validateShape(data);
+                const md = toMarkdown(data);
+                out.textContent = md;
+                updateMeta(data, errs, md);
+
+                if (errs.length) {
+                    // Show the first few issues inline for convenience
+                    const preview = errs.slice(0, 4).join(" | ");
+                    status.textContent += `  (${preview}${errs.length > 4 ? " …" : ""})`;
+                }
+            });
+
+            $("#clearInp").addEventListener("click", () => {
+                inp.value = "";
+                status.textContent = "Input cleared.";
+                status.className = "footer muted";
+            });
+
+            $("#copy").addEventListener("click", async () => {
+                const text = out.textContent;
+                if (!text) return;
+                try {
+                    await navigator.clipboard.writeText(text);
+                    outMeta.textContent = (outMeta.textContent ? outMeta.textContent + " • " : "") + "Copied!";
+                } catch {
+                    // Fallback
+                    const tmp = document.createElement("textarea");
+                    tmp.value = text;
+                    document.body.appendChild(tmp);
+                    tmp.select();
+                    document.execCommand("copy");
+                    document.body.removeChild(tmp);
+                    outMeta.textContent =
+                        (outMeta.textContent ? outMeta.textContent + " • " : "") + "Copied (fallback).";
+                }
+            });
+
+            $("#clearOut").addEventListener("click", () => {
+                out.textContent = "";
+                outMeta.textContent = "";
+                status.textContent = "Output cleared.";
+                status.className = "footer muted";
+            });
+
+            // Preload sample JSON and convert on page load
+            (function init() {
+                inp.value = JSON.stringify(sample, null, 2);
+                const { data, error } = safeParse(inp.value);
+                if (!error) {
+                    const errs = validateShape(data);
+                    const md = toMarkdown(data);
+                    out.textContent = md;
+                    updateMeta(data, errs, md);
+                }
+            })();
+        </script>
+    </body>
+</html>
